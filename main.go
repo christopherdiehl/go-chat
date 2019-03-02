@@ -29,23 +29,28 @@ func main() {
 
 // Client handles the client interaction
 type Client struct {
-	connection net.Conn
-	username   string
+	connection net.Conn    // actual network connection
+	outbound   chan string // messages to send to client
+	incoming   chan string // messages from client
+	username   string      // username
+	joined     time.Time   // time joined
 }
 
 // Server contains all the server logic
 type Server struct {
-	port     string
-	started  time.Time
-	outbound chan string
+	port        string
+	started     time.Time
+	outbound    chan string
+	connections []*Client
 }
 
 // CreateServer with default values
 func CreateServer(port string) *Server {
 	return &Server{
-		port:     port,
-		outbound: make(chan string, 1),
-		started:  time.Now(), // default to now
+		port:        port,
+		outbound:    make(chan string, 1),
+		connections: make([]*Client, 1),
+		started:     time.Now(), // default to now
 	}
 }
 
@@ -64,8 +69,24 @@ func (server *Server) Listen() error {
 	}
 }
 
+// AddClient appends client to server connections if they possess a unique username
+func (server *Server) AddClient(client *Client) error {
+	for _, c := range server.connections {
+		if c.username == client.username {
+			client.outbound <- "Username in use, please select new one"
+		}
+	}
+	server.connections = append(server.connections, client)
+	return nil
+}
+
 // Broadcast sends message to all the clients
-func (server *Server) Broadcast(message string) error {
+func (server *Server) Broadcast(message string, sender string) error {
+	for _, c := range server.connections {
+		if c.username != sender {
+			c.outbound <- fmt.Sprintf("[%s][%s]: %s", sender, time.Now().String(), message)
+		}
+	}
 	server.outbound <- message
 	return nil
 }
@@ -75,15 +96,20 @@ func (server *Server) Broadcast(message string) error {
 func (server *Server) HandleClient(conn net.Conn) error {
 	defer conn.Close()
 	incoming := readConnection(conn)
+	var username string = ""
 	for {
 		select {
 		case message, open := <-incoming:
-			fmt.Println(message)
-			if open == false {
-				server.Broadcast("Client closed")
+			if open == false && username != "" {
+				server.Broadcast("left", username)
 				return nil
 			}
-			server.Broadcast(message)
+			if username == "" {
+				username = message
+				server.Broadcast("joined", username)
+				continue
+			}
+			server.Broadcast(message, username)
 		case message := <-server.outbound:
 			conn.Write([]byte(message))
 		}
