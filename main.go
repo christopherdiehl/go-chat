@@ -15,8 +15,12 @@ func main() {
 	switch os.Args[1] {
 	case "connect":
 		fmt.Println("Connecting you now")
+
 	case "start":
-		fmt.Println("Spooling up now")
+		server := CreateServer(":8080")
+		err := server.Listen()
+		fmt.Println(err)
+		fmt.Println("Should be listening on port 8080")
 	default:
 		fmt.Println("Please specify connect or start")
 		os.Exit(1)
@@ -26,24 +30,22 @@ func main() {
 // Client handles the client interaction
 type Client struct {
 	connection net.Conn
-	outgoing   *chan string
-	incoming   *chan string
 	username   string
 }
 
 // Server contains all the server logic
 type Server struct {
-	port    string
-	started time.Time
-	clients []*Client
+	port     string
+	started  time.Time
+	outbound chan string
 }
 
 // CreateServer with default values
 func CreateServer(port string) *Server {
 	return &Server{
-		port:    port,
-		started: time.Now(), // default to now
-		clients: make([]*Client, 0),
+		port:     port,
+		outbound: make(chan string, 1),
+		started:  time.Now(), // default to now
 	}
 }
 
@@ -61,21 +63,49 @@ func (server *Server) Listen() error {
 		go server.HandleClient(conn)
 	}
 }
+
+// Broadcast sends message to all the clients
 func (server *Server) Broadcast(message string) error {
+	server.outbound <- message
 	return nil
 }
 
 // HandleClient connection.
 // If incoming message - broadcasts
 func (server *Server) HandleClient(conn net.Conn) error {
+	defer conn.Close()
+	incoming := readConnection(conn)
 	for {
-		buf := make([]byte, 1028)
-		n, err := conn.Read(buf)
-		if err != nil {
-			fmt.Println("Error reading from client")
+		select {
+		case message, open := <-incoming:
+			fmt.Println(message)
+			if open == false {
+				server.Broadcast("Client closed")
+				return nil
+			}
+			server.Broadcast(message)
+		case message := <-server.outbound:
+			conn.Write([]byte(message))
 		}
-		message := string(buf[:n])
-		_ = message
 	}
-	return nil
+}
+
+// returns string channel for incoming messages
+func readConnection(conn net.Conn) (incoming chan string) {
+	incoming = make(chan string, 1)
+	go func() {
+		for {
+			buf := make([]byte, 1028)
+			n, err := conn.Read(buf)
+			if err != nil {
+				fmt.Println(err)
+				close(incoming)
+			}
+			if n > 1 {
+				incoming <- string(buf[:n])
+			}
+			// time.Sleep(100 * time.Millisecond) // sleep for 100 milliseconds
+		}
+	}()
+	return
 }
