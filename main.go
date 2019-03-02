@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -74,9 +75,11 @@ func (server *Server) AddClient(client *Client) error {
 	for _, c := range server.connections {
 		if c.username == client.username {
 			client.outbound <- "Username in use, please select new one"
+			return errors.New("Username in use")
 		}
 	}
 	server.connections = append(server.connections, client)
+	server.Broadcast("joined", client.username)
 	return nil
 }
 
@@ -87,8 +90,24 @@ func (server *Server) Broadcast(message string, sender string) error {
 			c.outbound <- fmt.Sprintf("[%s][%s]: %s", sender, time.Now().String(), message)
 		}
 	}
-	server.outbound <- message
 	return nil
+}
+
+// RemoveClient removes client from server connections
+// sends a message to the rest of the chat board letting them know the client has left
+// returns true if successful, false if not found
+func (server *Server) RemoveClient(client *Client) bool {
+	for i, c := range server.connections {
+		if c.username == client.username {
+			server.Broadcast("left at "+time.Now().String(), client.username)
+			// zero out pointer as per https://github.com/golang/go/wiki/SliceTricks
+			copy(server.connections[i:], server.connections[i+1:])
+			server.connections[len(server.connections)-1] = nil
+			server.connections = server.connections[:len(server.connections)-1]
+			return true
+		}
+	}
+	return false
 }
 
 // HandleClient connection.
@@ -96,21 +115,34 @@ func (server *Server) Broadcast(message string, sender string) error {
 func (server *Server) HandleClient(conn net.Conn) error {
 	defer conn.Close()
 	incoming := readConnection(conn)
-	var username string = ""
+	var username string
+	var client *Client
 	for {
 		select {
 		case message, open := <-incoming:
-			if open == false && username != "" {
-				server.Broadcast("left", username)
+			// client connection closed
+			if open == false {
+				// user already in the system, need to remove
+				if username != "" {
+					server.RemoveClient(client)
+				}
 				return nil
 			}
 			if username == "" {
-				username = message
-				server.Broadcast("joined", username)
+				client = &Client{
+					outbound:   make(chan string, 1),
+					username:   message,
+					joined:     time.Now(),
+					connection: conn,
+					incoming:   incoming,
+				}
+				if err := server.AddClient(client); err != nil {
+					username = message
+				}
 				continue
 			}
 			server.Broadcast(message, username)
-		case message := <-server.outbound:
+		case message := <-client.outbound:
 			conn.Write([]byte(message))
 		}
 	}
