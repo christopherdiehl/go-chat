@@ -137,7 +137,7 @@ func (server *Server) HandleClient(conn net.Conn) error {
 			}
 			if username == "" {
 				client.username = strings.Trim(message, "\n")
-				if err := server.AddClient(client); err != nil {
+				if err := server.AddClient(client); err == nil {
 					username = client.username
 					continue
 				}
