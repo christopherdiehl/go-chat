@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -50,7 +51,7 @@ func CreateServer(port string) *Server {
 	return &Server{
 		port:        port,
 		outbound:    make(chan string, 1),
-		connections: make([]*Client, 1),
+		connections: make([]*Client, 0),
 		started:     time.Now(), // default to now
 	}
 }
@@ -87,7 +88,7 @@ func (server *Server) AddClient(client *Client) error {
 func (server *Server) Broadcast(message string, sender string) error {
 	for _, c := range server.connections {
 		if c.username != sender {
-			c.outbound <- fmt.Sprintf("[%s][%s]: %s", sender, time.Now().String(), message)
+			c.outbound <- fmt.Sprintf("[%s][%s]: %s\n", sender, time.Now().Format(time.UnixDate), message)
 		}
 	}
 	return nil
@@ -116,7 +117,13 @@ func (server *Server) HandleClient(conn net.Conn) error {
 	defer conn.Close()
 	incoming := readConnection(conn)
 	var username string
-	var client *Client
+	client := &Client{
+		outbound:   make(chan string, 1),
+		username:   "",
+		joined:     time.Now(),
+		connection: conn,
+		incoming:   incoming,
+	}
 	for {
 		select {
 		case message, open := <-incoming:
@@ -129,16 +136,12 @@ func (server *Server) HandleClient(conn net.Conn) error {
 				return nil
 			}
 			if username == "" {
-				client = &Client{
-					outbound:   make(chan string, 1),
-					username:   message,
-					joined:     time.Now(),
-					connection: conn,
-					incoming:   incoming,
-				}
+				client.username = strings.Trim(message, "\n")
 				if err := server.AddClient(client); err != nil {
-					username = message
+					username = client.username
+					continue
 				}
+				client.username = ""
 				continue
 			}
 			server.Broadcast(message, username)
@@ -160,7 +163,7 @@ func readConnection(conn net.Conn) (incoming chan string) {
 				close(incoming)
 			}
 			if n > 1 {
-				incoming <- string(buf[:n])
+				incoming <- strings.TrimSuffix(string(buf[:n]), "\r\n")
 			}
 			// time.Sleep(100 * time.Millisecond) // sleep for 100 milliseconds
 		}
