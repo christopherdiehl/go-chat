@@ -11,22 +11,12 @@ import (
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Println("Usage:\n connect -- connect to chat server\n start -- spool up chat server")
+		fmt.Println("Usage:\n port to run on")
 		os.Exit(1)
 	}
-	switch os.Args[1] {
-	case "connect":
-		fmt.Println("Connecting you now")
-
-	case "start":
-		server := CreateServer(":8080")
-		err := server.Listen()
-		fmt.Println(err)
-		fmt.Println("Should be listening on port 8080")
-	default:
-		fmt.Println("Please specify connect or start")
-		os.Exit(1)
-	}
+	server := CreateServer("127.0.0.1:" + os.Args[1])
+	err := server.Listen()
+	fmt.Println(err)
 }
 
 // Client handles the client interaction
@@ -80,7 +70,7 @@ func (server *Server) AddClient(client *Client) error {
 		}
 	}
 	server.connections = append(server.connections, client)
-	server.Broadcast("joined", client.username)
+	server.Broadcast("joined \n", client.username)
 	return nil
 }
 
@@ -88,7 +78,7 @@ func (server *Server) AddClient(client *Client) error {
 func (server *Server) Broadcast(message string, sender string) error {
 	for _, c := range server.connections {
 		if c.username != sender {
-			c.outbound <- fmt.Sprintf("[%s][%s]: %s\n", sender, time.Now().Format(time.UnixDate), message)
+			c.outbound <- fmt.Sprintf("[%s][%s]: %s", sender, time.Now().Format(time.UnixDate), message)
 		}
 	}
 	return nil
@@ -100,7 +90,7 @@ func (server *Server) Broadcast(message string, sender string) error {
 func (server *Server) RemoveClient(client *Client) bool {
 	for i, c := range server.connections {
 		if c.username == client.username {
-			server.Broadcast("left at "+time.Now().String(), client.username)
+			server.Broadcast("left at "+time.Now().Format(time.UnixDate)+"\n", client.username)
 			// zero out pointer as per https://github.com/golang/go/wiki/SliceTricks
 			copy(server.connections[i:], server.connections[i+1:])
 			server.connections[len(server.connections)-1] = nil
@@ -116,6 +106,7 @@ func (server *Server) RemoveClient(client *Client) bool {
 func (server *Server) HandleClient(conn net.Conn) error {
 	defer conn.Close()
 	incoming := readConnection(conn)
+	conn.Write([]byte("Please enter a username "))
 	var username string
 	client := &Client{
 		outbound:   make(chan string, 1),
@@ -138,6 +129,7 @@ func (server *Server) HandleClient(conn net.Conn) error {
 			if username == "" {
 				client.username = strings.Trim(message, "\n")
 				if err := server.AddClient(client); err == nil {
+					conn.Write([]byte("Welcome, " + client.username + "\n"))
 					username = client.username
 					continue
 				}
@@ -161,11 +153,11 @@ func readConnection(conn net.Conn) (incoming chan string) {
 			if err != nil {
 				fmt.Println(err)
 				close(incoming)
+				return
 			}
 			if n > 1 {
 				incoming <- strings.TrimSuffix(string(buf[:n]), "\r\n")
 			}
-			// time.Sleep(100 * time.Millisecond) // sleep for 100 milliseconds
 		}
 	}()
 	return
