@@ -56,6 +56,7 @@ func (server *Server) Listen() error {
 		conn, err := ln.Accept()
 		if err != nil {
 			fmt.Println("Error accepting connection at ", time.Now())
+			continue
 		}
 		go server.HandleClient(conn)
 	}
